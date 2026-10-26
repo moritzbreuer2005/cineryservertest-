@@ -1,0 +1,22 @@
+{
+	auto_https off
+	admin off
+	http_port {$HTTP_PORT}
+}
+
+http://auth.{$BASE_DOMAIN}:{$HTTP_PORT} {
+	reverse_proxy keycloak:8080
+}
+
+http://cloud.{$BASE_DOMAIN}:{$HTTP_PORT} {
+	request_body {
+		max_size 10GB
+	}
+	redir /.well-known/carddav /remote.php/dav 301
+	redir /.well-known/caldav /remote.php/dav 301
+	reverse_proxy nextcloud:80
+}
+
+http://wp.{$BASE_DOMAIN}:{$HTTP_PORT} {
+	reverse_proxy wordpress:80
+}

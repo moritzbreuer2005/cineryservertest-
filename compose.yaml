@@ -1,0 +1,155 @@
+name: local-sso
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  # Reverse-Proxy: gleiche URLs fuer Browser UND Container (Netzwerk-Alias),
+  # damit der OIDC-Issuer ueberall identisch ist.
+  proxy:
+    image: caddy:2-alpine
+    <<: *restart
+    ports: ["${HTTP_PORT:-80}:${HTTP_PORT:-80}"]
+    environment:
+      HTTP_PORT: ${HTTP_PORT:-80}
+      BASE_DOMAIN: ${BASE_DOMAIN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      default:
+        aliases:
+          - auth.${BASE_DOMAIN}
+          - cloud.${BASE_DOMAIN}
+          - wp.${BASE_DOMAIN}
+
+  db:
+    image: mariadb:11.4
+    <<: *restart
+    command: --transaction-isolation=READ-COMMITTED --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      DB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db:/var/lib/mysql
+      - ./db/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KC_VERSION}
+    <<: *restart
+    command: start-dev --import-realm
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      KC_DB: mariadb
+      KC_DB_URL: jdbc:mariadb://db:3306/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${DB_PASSWORD}
+      KC_HOSTNAME: ${KC_URL}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      # Platzhalter in realm.json
+      KC_REALM: ${KC_REALM}
+      NC_URL: ${NC_URL}
+      WP_URL: ${WP_URL}
+      NEXTCLOUD_CLIENT_SECRET: ${NEXTCLOUD_CLIENT_SECRET}
+      WORDPRESS_CLIENT_SECRET: ${WORDPRESS_CLIENT_SECRET}
+      DEMO_PASSWORD: ${DEMO_PASSWORD}
+    volumes:
+      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/9000
+          echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          grep -q '"status": "UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  nextcloud:
+    image: nextcloud:${NC_VERSION}
+    <<: *restart
+    depends_on:
+      db: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      NEXTCLOUD_ADMIN_USER: ${NC_ADMIN_USER}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD}
+      NEXTCLOUD_TRUSTED_DOMAINS: cloud.${BASE_DOMAIN}
+      OVERWRITEHOST: cloud.${BASE_DOMAIN}${URL_PORT}
+      OVERWRITEPROTOCOL: http
+      OVERWRITECLIURL: ${NC_URL}
+      TRUSTED_PROXIES: 172.16.0.0/12 10.0.0.0/8 192.168.0.0/16
+      # fuer das Hook-Skript
+      OIDC_DISCOVERY_URI: ${KC_URL}/realms/${KC_REALM}/.well-known/openid-configuration
+      NC_URL: ${NC_URL}
+      OIDC_CLIENT_ID: nextcloud
+      OIDC_CLIENT_SECRET: ${NEXTCLOUD_CLIENT_SECRET}
+    volumes:
+      - nextcloud:/var/www/html
+      - ./nextcloud/hooks/before-starting:/docker-entrypoint-hooks.d/before-starting:ro
+
+  wordpress:
+    image: wordpress:${WP_VERSION}
+    <<: *restart
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', '${WP_URL}');
+        define('WP_SITEURL', '${WP_URL}');
+        define('FS_METHOD', 'direct');
+      OIDC_ROLE_MAP: ${OIDC_ROLE_MAP}
+      OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE}
+    volumes:
+      - wordpress:/var/www/html
+      - ./wordpress/mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+
+  # Einmal-Job: WordPress installieren, OIDC-Plugin konfigurieren (idempotent)
+  wp-init:
+    image: wordpress:cli
+    user: "33:33"
+    depends_on:
+      wordpress: {condition: service_started}
+      keycloak: {condition: service_healthy}
+    restart: "no"
+    environment:
+      HOME: /tmp
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WP_URL: ${WP_URL}
+      WP_ADMIN_USER: ${WP_ADMIN_USER}
+      WP_ADMIN_PASSWORD: ${WP_ADMIN_PASSWORD}
+      WP_ADMIN_EMAIL: ${WP_ADMIN_EMAIL}
+      KC_ISSUER: ${KC_URL}/realms/${KC_REALM}
+      OIDC_CLIENT_ID: wordpress
+      OIDC_CLIENT_SECRET: ${WORDPRESS_CLIENT_SECRET}
+    volumes:
+      - wordpress:/var/www/html
+      - ./wordpress/init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+
+volumes:
+  db:
+  nextcloud:
+  wordpress:

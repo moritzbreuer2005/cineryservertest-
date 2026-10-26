@@ -1,0 +1,103 @@
+{
+  "realm": "${KC_REALM}",
+  "displayName": "Local SSO",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "groups": [
+    { "name": "admin" },
+    { "name": "editors" },
+    { "name": "members" }
+  ],
+  "defaultGroups": ["/members"],
+  "users": [
+    {
+      "username": "alice", "email": "alice@example.test", "firstName": "Alice", "lastName": "Admin",
+      "enabled": true, "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_PASSWORD}", "temporary": false }],
+      "groups": ["/admin"]
+    },
+    {
+      "username": "bob", "email": "bob@example.test", "firstName": "Bob", "lastName": "Editor",
+      "enabled": true, "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_PASSWORD}", "temporary": false }],
+      "groups": ["/editors"]
+    },
+    {
+      "username": "carol", "email": "carol@example.test", "firstName": "Carol", "lastName": "Member",
+      "enabled": true, "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_PASSWORD}", "temporary": false }],
+      "groups": ["/members"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "nextcloud",
+      "name": "Nextcloud",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${NEXTCLOUD_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "rootUrl": "${NC_URL}",
+      "baseUrl": "${NC_URL}",
+      "redirectUris": ["${NC_URL}/apps/user_oidc/code"],
+      "webOrigins": ["${NC_URL}"],
+      "attributes": {
+        "post.logout.redirect.uris": "${NC_URL}/*",
+        "backchannel.logout.url": "${NC_URL}/apps/user_oidc/backchannel-logout/keycloak",
+        "backchannel.logout.session.required": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "wordpress",
+      "name": "WordPress",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${WORDPRESS_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "rootUrl": "${WP_URL}",
+      "baseUrl": "${WP_URL}",
+      "redirectUris": ["${WP_URL}/wp-admin/admin-ajax.php?action=openid-connect-authorize"],
+      "webOrigins": ["${WP_URL}"],
+      "attributes": {
+        "post.logout.redirect.uris": "${WP_URL}/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}
